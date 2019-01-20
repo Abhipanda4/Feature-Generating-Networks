@@ -1,5 +1,7 @@
+import torch
 from torch.utils.data.dataset import Dataset
 from torchvision import transforms
+from torch.autograd import Variable
 
 import numpy as np
 import os
@@ -7,25 +9,28 @@ import scipy.io as scio
 from PIL import Image
 
 class SUNDataset(Dataset):
-    def __init__(self, root_dir="data", train=True, augment=False, model=None):
+    def __init__(self, device, root_dir="data", train=True, synthetic=False, syn_dataset=None):
         super(SUNDataset, self).__init__()
+        self.device = device
+
         self.root_dir = root_dir
         self.image_dir = os.path.join(self.root_dir, "images")
 
-        self.labels, self.train_dataset, self.test_dataset = self.create_orig_dataset()
-        if train:
-            self.dataset = self.train_dataset
+        self.synthetic = synthetic
+        if self.synthetic:
+            assert syn_dataset is not None
+            self.syn_dataset = syn_dataset
         else:
-            self.dataset = self.test_dataset
-
-        self.augment = augment
-        if self.augment:
-            assert model is not None
-            self.aug_dataset = self.create_aug_dataset(model)
+            self.labels, self.train_dataset, self.test_dataset = self.create_orig_dataset()
+            if train:
+                self.dataset = self.train_dataset
+            else:
+                self.dataset = self.test_dataset
 
         self.transformations = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ])
 
     def load_data(self):
@@ -80,28 +85,34 @@ class SUNDataset(Dataset):
 
             # use standard split
             if idx < 645:
-                train_dataset.extend(label_set[label]['images'])
+                # 15 images for train set and 5 images for test - GZSL
+                train_dataset.extend(label_set[label]['images'][:15])
+                test_dataset.extend(label_set[label]['images'][15:])
             else:
                 test_dataset.extend(label_set[label]['images'])
 
         return labels, train_dataset, test_dataset
 
-    def create_aug_dataset(self, generator):
-        pass
-
     def __getitem__(self, index):
-        img_path = self.dataset[index]
+        if self.synthetic:
+            # choose an example from syn_dataset
+            img_features, label_attr, label_idx = self.syn_dataset[index]
+            return img_features, label_attr, label_idx
+        else:
+            img_path = self.dataset[index]
+            # load image from path
+            img = Image.open(os.path.join(self.image_dir, img_path)).convert("RGB")
+            if self.transformations:
+                img = self.transformations(img)
 
-        # load image
-        img = Image.open(os.path.join(self.image_dir, img_path))
-        if self.transformations:
-            img = self.transformations(img)
+            label = self.get_label_from_image(img_path)
+            label_attr = self.labels[label]['attribute']
+            label_idx = self.labels[label]['index']
 
-        label = self.get_label_from_image(img_path)
-        label_attr = self.labels[label]['attribute']
-        label_idx = self.labels[label]['index']
-
-        return img, label_attr, label_idx
+            return img, label_attr, label_idx
 
     def __len__(self):
-        return len(self.dataset)
+        if self.synthetic:
+            return len(self.syn_dataset)
+        else:
+            return len(self.dataset)
