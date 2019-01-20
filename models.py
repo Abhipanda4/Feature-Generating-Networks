@@ -9,14 +9,11 @@ class Generator(nn.Module):
             nn.Linear(z_dim + attr_dim, 4096),
             nn.LeakyReLU(),
             nn.Linear(4096, 2048),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
     def forward(self, z):
         return self.model(z)
-
-    def sample(self):
-        pass
 
 class Discriminator(nn.Module):
     def __init__(self, x_dim, attr_dim):
@@ -37,8 +34,8 @@ class SoftmaxClassifier(nn.Module):
         self.model = nn.Sequential(
             nn.Linear(x_dim + attr_dim, 4096),
             nn.LeakyReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(4096, out_dim),
+            nn.Dropout(0.2),
+            nn.Linear(4096, out_dim)
         )
 
     def forward(self, x):
@@ -57,4 +54,3 @@ class Resnet101(nn.Module):
 
     def forward(self, x):
         return self.model(x).squeeze()
-
