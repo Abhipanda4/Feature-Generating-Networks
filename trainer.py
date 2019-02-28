@@ -6,11 +6,13 @@ import torch.optim as optim
 from torch.distributions import uniform, normal
 
 import os
+import numpy as np
+from sklearn.metrics import accuracy_score
 
 from models import Generator, Discriminator, SoftmaxClassifier, Resnet101
 
 class Trainer:
-    def __init__(self, device, x_dim, z_dim, attr_dim, train_out, total_out, n_critic, lmbda, beta, bs):
+    def __init__(self, device, x_dim, z_dim, attr_dim, train_out, test_out, n_critic, lmbda, beta, bs):
         self.device = device
 
         self.x_dim = x_dim
@@ -22,8 +24,6 @@ class Trainer:
         self.beta = beta
         self.bs = bs
 
-        self.feature_extractor = Resnet101(finetune=False).to(self.device)
-
         self.eps_dist = uniform.Uniform(0, 1)
         self.Z_dist = normal.Normal(0, 1)
 
@@ -31,18 +31,18 @@ class Trainer:
         self.z_shape = torch.Size([bs, z_dim])
 
         self.net_G = Generator(z_dim, attr_dim).to(self.device)
-        self.optim_G = optim.Adam(self.net_G.parameters())
+        self.optim_G = optim.Adam(self.net_G.parameters(), lr=1e-4)
 
         self.net_D = Discriminator(x_dim, attr_dim).to(self.device)
-        self.optim_D = optim.Adam(self.net_D.parameters())
+        self.optim_D = optim.Adam(self.net_D.parameters(), lr=1e-4)
 
         # classifier for judging the output of generator
         self.classifier = SoftmaxClassifier(x_dim, attr_dim, train_out).to(self.device)
-        self.optim_cls = optim.Adam(self.classifier.parameters())
+        self.optim_cls = optim.Adam(self.classifier.parameters(), lr=1e-4)
 
         # Final classifier trained on augmented data for GZSL
-        self.final_classifier = SoftmaxClassifier(x_dim, attr_dim, total_out).to(self.device)
-        self.optim_final_cls = optim.Adam(self.final_classifier.parameters())
+        self.final_classifier = SoftmaxClassifier(x_dim, attr_dim, test_out).to(self.device)
+        self.optim_final_cls = optim.Adam(self.final_classifier.parameters(), lr=1e-4)
 
         self.criterion_cls = nn.CrossEntropyLoss()
 
@@ -51,25 +51,23 @@ class Trainer:
             os.mkdir(self.model_save_dir)
 
     def get_conditional_input(self, X, C_Y):
-        new_X = torch.cat([X, C_Y.float()], dim=1)
+        new_X = torch.cat([X, C_Y], dim=1).float()
         return autograd.Variable(new_X).to(self.device)
 
-    def fit_classifier(self, img, label_attr, label_idx):
+    def fit_classifier(self, img_features, label_attr, label_idx):
         '''
         Train the classifier in supervised manner on a single
         minibatch of available data
         Args:
-            img         -> bs X 3 X 224 X 224
-            label_attr  -> bs X 102
-            label_idx   -> bs
+            img         : bs X 2048
+            label_attr  : bs X 85
+            label_idx   : bs
         Returns:
             loss for the minibatch
         '''
-        label_idx = label_idx.to(self.device)
-        label_attr = label_attr.to(self.device)
-
-        img = autograd.Variable(img.squeeze()).to(self.device)
-        img_features = self.feature_extractor(img)
+        img_features = autograd.Variable(img_features).to(self.device)
+        label_attr = autograd.Variable(label_attr).to(self.device)
+        label_idx = autograd.Variable(label_idx).to(self.device)
 
         X_inp = self.get_conditional_input(img_features, label_attr)
         Y_pred = self.classifier(X_inp)
@@ -97,16 +95,14 @@ class Trainer:
         grad_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
         return grad_penalty
 
-    def fit_GAN(self, img, label_attr, label_idx, use_cls_loss=True):
+    def fit_GAN(self, img_features, label_attr, label_idx, use_cls_loss=True):
         L_gen = 0
         L_disc = 0
         total_L_disc = 0
 
-        label_attr = label_attr.to(self.device)
+        img_features = autograd.Variable(img_features.float()).to(self.device)
+        label_attr = autograd.Variable(label_attr.float()).to(self.device)
         label_idx = label_idx.to(self.device)
-
-        img = autograd.Variable(img.squeeze()).to(self.device)
-        img_features = self.feature_extractor(img)
 
         # =============================================================
         # optimize discriminator
@@ -140,7 +136,7 @@ class Trainer:
         Z = self.get_conditional_input(Z, label_attr)
 
         X_gen = self.net_G(Z)
-        X = torch.cat([X_gen, label_attr.float()], dim=1)
+        X = torch.cat([X_gen, label_attr], dim=1).float()
         L_gen = -1 * torch.mean(self.net_D(X))
 
         if use_cls_loss:
@@ -155,15 +151,10 @@ class Trainer:
 
         return total_L_disc, L_gen.item()
 
-    def fit_final_classifier(self, img, label_attr, label_idx, feature_input=False):
-        label_attr = label_attr.to(self.device)
+    def fit_final_classifier(self, img_features, label_attr, label_idx):
+        img_features = autograd.Variable(img_features.float()).to(self.device)
+        label_attr = autograd.Variable(label_attr.float()).to(self.device)
         label_idx = label_idx.to(self.device)
-
-        if feature_input:
-            img_features = img
-        else:
-            img = autograd.Variable(img.squeeze()).to(self.device)
-            img_features = self.feature_extractor(img)
 
         X_inp = self.get_conditional_input(img_features, label_attr)
         Y_pred = self.final_classifier(X_inp)
@@ -175,38 +166,47 @@ class Trainer:
 
         return loss.item()
 
-    def create_syn_dataset(self, labels):
-        n_examples = 50
+    def create_syn_dataset(self, test_labels, attributes, n_examples=2000):
         syn_dataset = []
-        for label_name, label_dict in labels.items():
-            attr = label_dict['attribute']
-            idx = label_dict['index']
-            n_syn = n_examples if idx >= 645 else n_examples - 15
 
-            z = self.Z_dist.sample(torch.Size([n_syn, self.z_dim]))
-            c_y = torch.stack([torch.FloatTensor(attr) for _ in range(n_syn)])
+        for test_cls, idx in test_labels.items():
+            attr = attributes[test_cls - 1]
+            z = self.Z_dist.sample(torch.Size([n_examples, self.z_dim]))
+            c_y = torch.stack([torch.FloatTensor(attr) for _ in range(n_examples)])
 
             z_inp = self.get_conditional_input(z, c_y)
             X_gen = self.net_G(z_inp)
 
-            syn_dataset.extend([(X_gen[i], attr, idx) for i in range(n_syn)])
+            syn_dataset.extend([(X_gen[i], test_cls, idx) for i in range(n_examples)])
 
         return syn_dataset
 
-    def test(self, img, label_attr, label_idx):
+    def test(self, generator, pretrained=False):
+        if pretrained:
+            model = self.classifier
+        else:
+            model = self.final_classifier
+
         # eval mode
-        self.final_classifier.eval()
+        model.eval()
+        batch_accuracies = []
+        for idx, (img_features, label_attr, label_idx) in enumerate(generator):
+            img_features = img_features.to(self.device)
+            label_attr = label_attr.to(self.device)
 
-        label_attr = label_attr.to(self.device)
-        label_idx = label_idx
+            X_inp = self.get_conditional_input(img_features, label_attr)
+            with torch.no_grad():
+                Y_probs = model(X_inp)
+            _, Y_pred = torch.max(Y_probs, dim=1)
 
-        X_inp = self.get_conditional_input(img, label_attr)
-        with torch.no_grad():
-            Y_pred = self.final_classifier(X_inp)
-        _, Y_idx = torch.max(Y_pred, dim=1)
+            Y_pred = Y_pred.cpu().numpy()
+            Y_real = label_idx.cpu().numpy()
 
-        correct = label_idx.eq(Y_idx.cpu()).sum()
-        return correct / self.bs
+            acc = accuracy_score(Y_pred, Y_real)
+            batch_accuracies.append(acc)
+
+        model.train()
+        return np.mean(batch_accuracies)
 
     def save_model(self, model=None):
         if model == "disc_classifier":
@@ -222,7 +222,7 @@ class Trainer:
 
         elif model == "final_classifier":
             ckpt_path = os.path.join(self.model_save_dir, model + ".pth")
-            torch.save(self.classifier.state_dict(), ckpt_path)
+            torch.save(self.final_classifier.state_dict(), ckpt_path)
 
         else:
             raise Exception("Trying to save unknown model: %s" % model)

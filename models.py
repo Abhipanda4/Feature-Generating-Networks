@@ -32,10 +32,19 @@ class SoftmaxClassifier(nn.Module):
     def __init__(self, x_dim, attr_dim, out_dim):
         super(SoftmaxClassifier, self).__init__()
         self.model = nn.Sequential(
-            nn.Linear(x_dim + attr_dim, 4096),
+            nn.Linear(x_dim + attr_dim, 2000),
+            nn.BatchNorm1d(2000),
             nn.LeakyReLU(),
             nn.Dropout(0.2),
-            nn.Linear(4096, out_dim)
+            nn.Linear(2000, 1200),
+            nn.BatchNorm1d(1200),
+            nn.LeakyReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(1200, 1200),
+            nn.BatchNorm1d(1200),
+            nn.LeakyReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(1200, out_dim),
         )
 
     def forward(self, x):
