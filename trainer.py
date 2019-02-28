@@ -166,7 +166,7 @@ class Trainer:
 
         return loss.item()
 
-    def create_syn_dataset(self, test_labels, attributes, n_examples=2000):
+    def create_syn_dataset(self, test_labels, attributes, n_examples=200):
         syn_dataset = []
 
         for test_cls, idx in test_labels.items():

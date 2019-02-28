@@ -89,7 +89,7 @@ else:
     train_agent.save_model(model=model_name)
 
 # =============================================================
-# TRAIN FINAL CLASSIFIER ON SYNTHETIC + REAL DATASET
+# TRAIN FINAL CLASSIFIER ON SYNTHETIC DATASET
 # =============================================================
 
 # create new synthetic dataset using trained Generator
@@ -114,8 +114,10 @@ else:
 
     train_agent.save_model(model=model_name)
 
-
-# Testing phase
+# =============================================================
+# TESTING PHASE
+# =============================================================
 test_dataset = AwA2Dataset(device, train_classes, test_classes, train=False)
 test_generator = DataLoader(test_dataset, **params)
+
 print("\nZSL Accuracy: %.3f" % train_agent.test(test_generator))
