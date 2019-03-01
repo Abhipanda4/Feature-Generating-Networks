@@ -30,7 +30,7 @@ class Discriminator(nn.Module):
 
 class MLPClassifier(nn.Module):
     def __init__(self, x_dim, attr_dim, out_dim):
-        super(SoftmaxClassifier, self).__init__()
+        super(MLPClassifier, self).__init__()
         self.model = nn.Sequential(
             nn.Linear(x_dim + attr_dim, 2000),
             nn.BatchNorm1d(2000),

@@ -15,6 +15,7 @@ parser.add_argument('--beta', type=float, default=0.01)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--n_epochs', type=int, default=10)
 parser.add_argument('--use_cls_loss', action='store_true', default=False)
+parser.add_argument('--visualize', action='store_true', default=False)
 
 args = parser.parse_args()
 
@@ -120,4 +121,18 @@ else:
 test_dataset = AwA2Dataset(device, train_classes, test_classes, train=False)
 test_generator = DataLoader(test_dataset, **params)
 
-print("\nZSL Accuracy: %.3f" % train_agent.test(test_generator))
+print("\nFinal Accuracy on ZSL Task: %.3f" % train_agent.test(test_generator))
+
+if args.visualize:
+    # TSNE visualizations for generated data
+    from sklearn.manifold import TSNE
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    D = [(x.detach().cpu().numpy(), i) for x, _, i in syn_dataset]
+    X_embedded = TSNE(n_components=2).fit_transform(np.asarray([d[0] for d in D]))
+    colors = np.asarray([d[1] for d in D])
+
+    plt.scatter(X_embedded[:, 0], X_embedded[:, 1], c=colors)
+    plt.savefig('tsne_plot.pdf')
+    plt.show()
