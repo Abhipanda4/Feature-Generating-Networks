@@ -9,7 +9,7 @@ import os
 import numpy as np
 from sklearn.metrics import accuracy_score
 
-from models import Generator, Discriminator, SoftmaxClassifier, Resnet101
+from models import Generator, Discriminator, MLPClassifier, Resnet101
 
 class Trainer:
     def __init__(self, device, x_dim, z_dim, attr_dim, train_out, test_out, n_critic, lmbda, beta, bs):
@@ -37,11 +37,11 @@ class Trainer:
         self.optim_D = optim.Adam(self.net_D.parameters(), lr=1e-4)
 
         # classifier for judging the output of generator
-        self.classifier = SoftmaxClassifier(x_dim, attr_dim, train_out).to(self.device)
+        self.classifier = MLPClassifier(x_dim, attr_dim, train_out).to(self.device)
         self.optim_cls = optim.Adam(self.classifier.parameters(), lr=1e-4)
 
         # Final classifier trained on augmented data for GZSL
-        self.final_classifier = SoftmaxClassifier(x_dim, attr_dim, test_out).to(self.device)
+        self.final_classifier = MLPClassifier(x_dim, attr_dim, test_out).to(self.device)
         self.optim_final_cls = optim.Adam(self.final_classifier.parameters(), lr=1e-4)
 
         self.criterion_cls = nn.CrossEntropyLoss()

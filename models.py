@@ -28,7 +28,7 @@ class Discriminator(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-class SoftmaxClassifier(nn.Module):
+class MLPClassifier(nn.Module):
     def __init__(self, x_dim, attr_dim, out_dim):
         super(SoftmaxClassifier, self).__init__()
         self.model = nn.Sequential(
