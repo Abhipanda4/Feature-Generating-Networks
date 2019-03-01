@@ -10,4 +10,4 @@ Remarks:
 * Using MLPClassifier instead of a linear Softmax classifier yields much better results.
 
 Note: 
-The dataset has to be downloaded and extracted into proper numpy arrays of specified shapes for the training/testing the model. See comments in datautils.py for more info.
+The dataset has to be downloaded and extracted into proper numpy arrays of specified shapes for training/testing the model. All relevant files except the Resnet101 feature matrix have been uploaded in this repo. See comments in datautils.py for more info.
