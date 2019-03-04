@@ -140,6 +140,7 @@ class Trainer:
         L_gen = -1 * torch.mean(self.net_D(X))
 
         if use_cls_loss:
+            self.classifier.eval()
             Y_pred = F.softmax(self.classifier(X), dim=0)
             log_prob = torch.log(torch.gather(Y_pred, 1, label_idx.unsqueeze(1)))
             L_cls = -1 * torch.mean(log_prob)
