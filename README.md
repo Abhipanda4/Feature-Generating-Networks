@@ -2,11 +2,11 @@
 
 PyTorch implementation of paper: <https://arxiv.org/abs/1712.00981>
 
-Currently, only Animals With Attributes 2 dataset is supported(<https://cvml.ist.ac.at/AwA2/>)
+4 datasets are currently supported: SUN, CUB, AWA1 & AWA2.
 
 <!--Accuracy obtained: 96.1%-->
 Remarks:
-* For training the model, use ``python3 main.py --n_epochs 20 --use_cls_loss --visualize``
+* For training the model, use ``python3 main.py --n_epochs 20 --use_cls_loss``
 * Using MLPClassifier instead of a linear Softmax classifier yields much better results.
 
 Note: 

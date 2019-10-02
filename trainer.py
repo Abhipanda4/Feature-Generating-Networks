@@ -12,36 +12,56 @@ from sklearn.metrics import accuracy_score
 from models import Generator, Discriminator, MLPClassifier, Resnet101
 
 class Trainer:
-    def __init__(self, device, x_dim, z_dim, attr_dim, train_out, test_out, n_critic, lmbda, beta, bs):
+    def __init__(
+        self, device, x_dim, z_dim, attr_dim, **kwargs):
+        '''
+        Trainer class.
+        Args:
+            device: CPU/GPU
+            x_dim: Dimension of image feature vector
+            z_dim: Dimension of noise vector
+            attr_dim: Dimension of attribute vector
+            kwargs
+        '''
         self.device = device
 
         self.x_dim = x_dim
         self.z_dim = z_dim
         self.attr_dim = attr_dim
 
-        self.n_critic = n_critic
-        self.lmbda = lmbda
-        self.beta = beta
-        self.bs = bs
+        self.n_critic = kwargs.get('n_critic', 5)
+        self.lmbda = kwargs.get('lmbda', 10.0)
+        self.beta = kwargs.get('beta', 0.01)
+        self.bs = kwargs.get('batch_size', 32)
+
+        self.gzsl = kwargs.get('gzsl', False)
+        self.n_train = kwargs.get('n_train')
+        self.n_test = kwargs.get('n_test')
+        if self.gzsl:
+            self.n_test = self.n_train + self.n_test
 
         self.eps_dist = uniform.Uniform(0, 1)
         self.Z_dist = normal.Normal(0, 1)
 
-        self.eps_shape = torch.Size([bs, 1])
-        self.z_shape = torch.Size([bs, z_dim])
+        self.eps_shape = torch.Size([self.bs, 1])
+        self.z_shape = torch.Size([self.bs, self.z_dim])
 
-        self.net_G = Generator(z_dim, attr_dim).to(self.device)
+        self.net_G = Generator(self.z_dim, self.attr_dim).to(self.device)
         self.optim_G = optim.Adam(self.net_G.parameters(), lr=1e-4)
 
-        self.net_D = Discriminator(x_dim, attr_dim).to(self.device)
+        self.net_D = Discriminator(self.x_dim, self.attr_dim).to(self.device)
         self.optim_D = optim.Adam(self.net_D.parameters(), lr=1e-4)
 
         # classifier for judging the output of generator
-        self.classifier = MLPClassifier(x_dim, attr_dim, train_out).to(self.device)
+        self.classifier = MLPClassifier(
+            self.x_dim, self.attr_dim, self.n_train
+        ).to(self.device)
         self.optim_cls = optim.Adam(self.classifier.parameters(), lr=1e-4)
 
         # Final classifier trained on augmented data for GZSL
-        self.final_classifier = MLPClassifier(x_dim, attr_dim, test_out).to(self.device)
+        self.final_classifier = MLPClassifier(
+            self.x_dim, self.attr_dim, self.n_test
+        ).to(self.device)
         self.optim_final_cls = optim.Adam(self.final_classifier.parameters(), lr=1e-4)
 
         self.criterion_cls = nn.CrossEntropyLoss()
@@ -167,9 +187,23 @@ class Trainer:
 
         return loss.item()
 
-    def create_syn_dataset(self, test_labels, attributes, n_examples=200):
+    def create_syn_dataset(self, test_labels, attributes, seen_dataset, n_examples=400):
+        '''
+        Creates a synthetic dataset based on attribute vectors of unseen class
+        Args:
+            test_labels: A dict with key as original serial number in provided
+                dataset and value as the index which is predicted during
+                classification by network
+            attributes: A np array containing class attributes for each class
+                of dataset
+            seen_dataset: A list of 3-tuple (x, orig_label, y) where x belongs to one of the
+                seen classes and y is classification label. Used for generating
+                latent representations of seen classes in GZSL
+            n_samples: Number of samples of each unseen class to be generated(Default: 400)
+        Returns:
+            A list of 3-tuple (z, _, y) where z is latent representations and y is
+        '''
         syn_dataset = []
-
         for test_cls, idx in test_labels.items():
             attr = attributes[test_cls - 1]
             z = self.Z_dist.sample(torch.Size([n_examples, self.z_dim]))
@@ -180,9 +214,12 @@ class Trainer:
 
             syn_dataset.extend([(X_gen[i], test_cls, idx) for i in range(n_examples)])
 
+        if seen_dataset is not None:
+            syn_dataset.extend(seen_dataset)
+
         return syn_dataset
 
-    def test(self, generator, pretrained=False):
+    def test(self, data_generator, pretrained=False):
         if pretrained:
             model = self.classifier
         else:
@@ -191,7 +228,7 @@ class Trainer:
         # eval mode
         model.eval()
         batch_accuracies = []
-        for idx, (img_features, label_attr, label_idx) in enumerate(generator):
+        for idx, (img_features, label_attr, label_idx) in enumerate(data_generator):
             img_features = img_features.to(self.device)
             label_attr = label_attr.to(self.device)
 
@@ -205,23 +242,22 @@ class Trainer:
 
             acc = accuracy_score(Y_pred, Y_real)
             batch_accuracies.append(acc)
-
-        model.train()
         return np.mean(batch_accuracies)
 
     def save_model(self, model=None):
-        if model == "disc_classifier":
+        if "disc_classifier" in model:
             ckpt_path = os.path.join(self.model_save_dir, model + ".pth")
             torch.save(self.classifier.state_dict(), ckpt_path)
 
-        elif model == "gan":
-            g_ckpt_path = os.path.join(self.model_save_dir, "generator.pth")
+        elif "gan" in model:
+            dset_name = model.split('_')[0]
+            g_ckpt_path = os.path.join(self.model_save_dir, "%s_generator.pth" % dset_name)
             torch.save(self.net_G.state_dict(), g_ckpt_path)
 
-            d_ckpt_path = os.path.join(self.model_save_dir, "discriminator.pth")
+            d_ckpt_path = os.path.join(self.model_save_dir, "%s_discriminator.pth" % dset_name)
             torch.save(self.net_D.state_dict(), d_ckpt_path)
 
-        elif model == "final_classifier":
+        elif "final_classifier" in model:
             ckpt_path = os.path.join(self.model_save_dir, model + ".pth")
             torch.save(self.final_classifier.state_dict(), ckpt_path)
 
@@ -229,27 +265,28 @@ class Trainer:
             raise Exception("Trying to save unknown model: %s" % model)
 
     def load_model(self, model=None):
-        if model == "disc_classifier":
+        if "disc_classifier" in model:
             ckpt_path = os.path.join(self.model_save_dir, model + ".pth")
             if os.path.exists(ckpt_path):
                 self.classifier.load_state_dict(torch.load(ckpt_path))
                 return True
 
-        elif model == "gan":
+        elif "gan" in model:
             f1, f2 = False, False
-            g_ckpt_path = os.path.join(self.model_save_dir, "generator.pth")
+            dset_name = model.split('_')[0]
+            g_ckpt_path = os.path.join(self.model_save_dir, "%s_generator.pth" % dset_name)
             if os.path.exists(g_ckpt_path):
                 self.net_G.load_state_dict(torch.load(g_ckpt_path))
                 f1 = True
 
-            d_ckpt_path = os.path.join(self.model_save_dir, "discriminator.pth")
+            d_ckpt_path = os.path.join(self.model_save_dir, "%s_discriminator.pth" % dset_name)
             if os.path.exists(d_ckpt_path):
                 self.net_D.load_state_dict(torch.load(d_ckpt_path))
                 f2 = True
 
             return f1 and f2
 
-        elif model == "final_classifier":
+        elif "final_classifier" in model:
             ckpt_path = os.path.join(self.model_save_dir, model + ".pth")
             if os.path.exists(ckpt_path):
                 self.final_classifier.load_state_dict(torch.load(ckpt_path))

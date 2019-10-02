@@ -2,12 +2,13 @@ import torch
 from torch.utils.data import DataLoader
 import argparse
 
-from datautils import AwA2Dataset
+from datautils import ZSLDataset
 from trainer import Trainer
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--dataset', type=str, default='awa2')
+parser.add_argument('--gzsl', action='store_true', default=False)
 parser.add_argument('--latent_dim', type=int, default=128)
 parser.add_argument('--n_critic', type=int, default=5)
 parser.add_argument('--lmbda', type=float, default=10.0)
@@ -19,11 +20,21 @@ parser.add_argument('--visualize', action='store_true', default=False)
 
 args = parser.parse_args()
 
-if args.dataset == 'awa2':
+if args.dataset == 'awa2' or args.dataset == 'awa1':
     x_dim = 2048
     attr_dim = 85
-    train_classes = 40
-    test_classes = 10
+    n_train = 40
+    n_test = 10
+elif args.dataset == 'cub':
+    x_dim = 2048
+    attr_dim = 312
+    n_train = 150
+    n_test = 50
+elif args.dataset == 'sun':
+    x_dim = 2048
+    attr_dim = 102
+    n_train = 645
+    n_test = 72
 else:
     raise NotImplementedError
 
@@ -33,9 +44,9 @@ n_epochs = args.n_epochs
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 train_agent = Trainer(
     device, x_dim, args.latent_dim, attr_dim,
-    train_classes, test_classes,
-    args.n_critic, args.lmbda, args.beta,
-    args.batch_size
+    n_train=n_train, n_test=n_test, gzsl=args.gzsl,
+    n_critic=args.n_critic, lmbda=args.lmbda, beta=args.beta,
+    batch_size=args.batch_size
 )
 
 params = {
@@ -45,13 +56,13 @@ params = {
     'drop_last': True
 }
 
-train_dataset = AwA2Dataset(device, train_classes, test_classes)
+train_dataset = ZSLDataset(args.dataset, n_train, n_test, args.gzsl)
 train_generator = DataLoader(train_dataset, **params)
 
 # =============================================================
 # PRETRAIN THE SOFTMAX CLASSIFIER
 # =============================================================
-model_name = "disc_classifier"
+model_name = "%s_disc_classifier" % args.dataset
 success = train_agent.load_model(model=model_name)
 if success:
     print("Discriminative classifier parameters loaded...")
@@ -70,7 +81,7 @@ else:
 # =============================================================
 # TRAIN THE GANs
 # =============================================================
-model_name = "gan"
+model_name = "%s_generator" % args.dataset
 success = train_agent.load_model(model=model_name)
 if success:
     print("\nGAN parameters loaded....")
@@ -94,11 +105,17 @@ else:
 # =============================================================
 
 # create new synthetic dataset using trained Generator
-syn_dataset = train_agent.create_syn_dataset(train_dataset.test_labels, train_dataset.attributes)
-synthetic_train_dataset = AwA2Dataset(device, train_classes, test_classes, synthetic=True, syn_dataset=syn_dataset)
-syn_train_generator = DataLoader(synthetic_train_dataset, **params)
+seen_dataset = None
+if args.gzsl:
+    seen_dataset = train_dataset.gzsl_dataset
 
-model_name = "final_classifier"
+syn_dataset = train_agent.create_syn_dataset(
+        train_dataset.test_classmap, train_dataset.attributes, seen_dataset)
+final_dataset = ZSLDataset(args.dataset, n_train, n_test,
+        gzsl=args.gzsl, train=True, synthetic=True, syn_dataset=syn_dataset)
+final_train_generator = DataLoader(final_dataset, **params)
+
+model_name = "%s_final_classifier" % args.dataset
 success = train_agent.load_model(model=model_name)
 if success:
     print("\nFinal classifier parameters loaded....")
@@ -106,7 +123,7 @@ else:
     print("\nTraining the final classifier on the synthetic dataset...")
     for ep in range(1, n_epochs + 1):
         syn_loss = 0
-        for idx, (img, label_attr, label_idx) in enumerate(syn_train_generator):
+        for idx, (img, label_attr, label_idx) in enumerate(final_train_generator):
             l = train_agent.fit_final_classifier(img, label_attr, label_idx)
             syn_loss += l
 
@@ -118,21 +135,7 @@ else:
 # =============================================================
 # TESTING PHASE
 # =============================================================
-test_dataset = AwA2Dataset(device, train_classes, test_classes, train=False)
+test_dataset = ZSLDataset(args.dataset, n_train, n_test, gzsl=args.gzsl, train=False)
 test_generator = DataLoader(test_dataset, **params)
 
 print("\nFinal Accuracy on ZSL Task: %.3f" % train_agent.test(test_generator))
-
-if args.visualize:
-    # TSNE visualizations for generated data
-    from sklearn.manifold import TSNE
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    D = [(x.detach().cpu().numpy(), i) for x, _, i in syn_dataset]
-    X_embedded = TSNE(n_components=2).fit_transform(np.asarray([d[0] for d in D]))
-    colors = np.asarray([d[1] for d in D])
-
-    plt.scatter(X_embedded[:, 0], X_embedded[:, 1], c=colors)
-    plt.savefig('tsne_plot.pdf')
-    plt.show()
