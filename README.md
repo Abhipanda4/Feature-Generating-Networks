@@ -1,3 +1,5 @@
+WARNING: There are some mistakes in the code available here, please do not use it as a benchmark or component. I will try to fix the project as soon as possibe. Please see the issues page to know the error.
+
 ## Feature Generating Networks for ZSL in Pytorch
 
 PyTorch implementation of paper: [Feature Generating Networks for Zero-Shot Learning](https://arxiv.org/abs/1712.00981)
